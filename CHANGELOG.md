@@ -9,6 +9,8 @@ this crate adheres to
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-22
+
 ### Added
 
 - Initial `philharmonic-workflow` implementation for Phase 4.
@@ -21,10 +23,16 @@ this crate adheres to
 - Five-state lifecycle handling with terminal-state immutability checks.
 - Nine-step execution sequence implementation, including step-record-first
   write ordering and malformed-result handling.
-- Audit-discipline enforcement for `StepRecord.subject` (claims are never persisted).
+- Audit-discipline enforcement for `StepRecord.subject`: the persisted
+  shape is a `StepRecordSubject` newtype carrying only `kind`, `id`,
+  and `authority_id`. `claims` and `tenant_id` are structurally absent
+  from the persisted type, so they cannot be leaked into a step record
+  even by accident. Backed by a behavioral test.
 - Two-tier tests:
-  - Tier 1: always-on mock substrate integration tests.
-  - Tier 2: `#[ignore]` MySQL testcontainers integration tests.
+  - Tier 1: always-on mock substrate integration tests (8 tests).
+  - Tier 2: `#[ignore]` MySQL testcontainers integration tests (3 tests).
+- Verified clean under `cargo +nightly miri test` for the full tier-1
+  test suite prior to publish.
 
 ## [0.0.0]
 
