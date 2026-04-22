@@ -9,9 +9,22 @@ this crate adheres to
 
 ## [Unreleased]
 
-Implementation pending. See the
-[Philharmonic workspace ROADMAP](https://github.com/metastable-void/philharmonic-workspace/blob/main/ROADMAP.md)
-for the phase that populates this crate.
+### Added
+
+- Initial `philharmonic-workflow` implementation for Phase 4.
+- Entity kinds: `WorkflowTemplate`, `WorkflowInstance`, and `StepRecord`.
+- `SubjectContext` and `SubjectKind`, reusing `philharmonic-policy`
+  markers (`Tenant`, `MintingAuthority`).
+- Async trait boundaries: `StepExecutor` and `ConfigLowerer`.
+- `WorkflowEngine<S, E, L>` with `create_instance`, `execute_step`,
+  `complete`, and `cancel`.
+- Five-state lifecycle handling with terminal-state immutability checks.
+- Nine-step execution sequence implementation, including step-record-first
+  write ordering and malformed-result handling.
+- Audit-discipline enforcement for `StepRecord.subject` (claims are never persisted).
+- Two-tier tests:
+  - Tier 1: always-on mock substrate integration tests.
+  - Tier 2: `#[ignore]` MySQL testcontainers integration tests.
 
 ## [0.0.0]
 
