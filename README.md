@@ -97,4 +97,14 @@ return `WorkflowError::InstanceTerminal` when called after termination.
 
 `SubjectContext.claims` are intentionally never persisted in step records.
 
+## Contributing
+
+This crate is developed as a submodule of the Philharmonic
+workspace. Workspace-wide development conventions — git workflow,
+script wrappers, Rust code rules, versioning, terminology — live
+in the workspace meta-repo at
+[metastable-void/philharmonic-workspace](https://github.com/metastable-void/philharmonic-workspace),
+authoritatively in its
+[`CONTRIBUTING.md`](https://github.com/metastable-void/philharmonic-workspace/blob/main/CONTRIBUTING.md).
+
 SPDX-License-Identifier: Apache-2.0 OR MPL-2.0
