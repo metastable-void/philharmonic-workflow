@@ -9,6 +9,8 @@ this crate adheres to
 
 ## [Unreleased]
 
+## [0.1.1]
+
 ## [0.1.0] - 2026-04-22
 
 ### Added
