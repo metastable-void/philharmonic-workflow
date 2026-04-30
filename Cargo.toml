@@ -11,7 +11,7 @@ description = "Workflow orchestration layer for Philharmonic: WorkflowTemplate, 
 [dependencies]
 philharmonic-types = "0.3"
 philharmonic-store = "0.1"
-philharmonic-policy = "0.1"
+philharmonic-policy = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
