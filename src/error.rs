@@ -16,49 +16,69 @@ pub enum WorkflowError {
 
     /// Template entity does not exist.
     #[error("workflow template not found: {template_id}")]
-    TemplateNotFound { template_id: Uuid },
+    TemplateNotFound {
+        /// Looked-up template UUID.
+        template_id: Uuid,
+    },
 
     /// Template revision does not exist.
     #[error("workflow template revision not found: {template_id}@{revision_seq}")]
     TemplateRevisionNotFound {
+        /// Template UUID.
         template_id: Uuid,
+        /// Expected revision sequence number.
         revision_seq: u64,
     },
 
     /// Instance entity does not exist.
     #[error("workflow instance not found: {instance_id}")]
-    InstanceNotFound { instance_id: Uuid },
+    InstanceNotFound {
+        /// Looked-up instance UUID.
+        instance_id: Uuid,
+    },
 
     /// Instance has no revision yet.
     #[error("workflow instance has no revisions: {instance_id}")]
-    InstanceRevisionMissing { instance_id: Uuid },
+    InstanceRevisionMissing {
+        /// Instance UUID.
+        instance_id: Uuid,
+    },
 
     /// Revision is missing a required content attribute.
     #[error("missing content attribute '{attribute}' on {entity_name}")]
     MissingContentAttribute {
+        /// Entity type name.
         entity_name: &'static str,
+        /// Missing attribute name.
         attribute: &'static str,
     },
 
     /// Revision is missing a required entity attribute.
     #[error("missing entity attribute '{attribute}' on {entity_name}")]
     MissingEntityAttribute {
+        /// Entity type name.
         entity_name: &'static str,
+        /// Missing attribute name.
         attribute: &'static str,
     },
 
     /// Revision is missing a required scalar attribute.
     #[error("missing scalar attribute '{attribute}' on {entity_name}")]
     MissingScalarAttribute {
+        /// Entity type name.
         entity_name: &'static str,
+        /// Missing attribute name.
         attribute: &'static str,
     },
 
     /// Referenced content hash is absent from the content store.
     #[error("missing content blob for {entity_name}.{attribute}: {hash}")]
     MissingContentBlob {
+        /// Entity type name.
         entity_name: &'static str,
+        /// Attribute name.
         attribute: &'static str,
+        /// Expected content hash.
         hash: Sha256,
     },
 
@@ -67,28 +87,40 @@ pub enum WorkflowError {
         "invalid scalar type for '{attribute}' on {entity_name}: expected {expected}, found {actual}"
     )]
     InvalidScalarType {
+        /// Entity type name.
         entity_name: &'static str,
+        /// Attribute name.
         attribute: &'static str,
+        /// Expected scalar type.
         expected: &'static str,
+        /// Actual scalar type.
         actual: &'static str,
     },
 
     /// Instance status value in storage is unknown.
     #[error("invalid instance status discriminant: {value}")]
-    InvalidInstanceStatusDiscriminant { value: i64 },
+    InvalidInstanceStatusDiscriminant {
+        /// Unrecognised discriminant value.
+        value: i64,
+    },
 
     /// Transition is disallowed by the lifecycle state machine.
     #[error("invalid workflow transition for {instance_id}: {from:?} -> {to:?}")]
     InvalidTransition {
+        /// Instance UUID.
         instance_id: Uuid,
+        /// Current status.
         from: InstanceStatus,
+        /// Attempted target status.
         to: InstanceStatus,
     },
 
     /// Operation attempted on terminal instance.
     #[error("workflow instance is terminal: {instance_id} ({status:?})")]
     InstanceTerminal {
+        /// Instance UUID.
         instance_id: Uuid,
+        /// Terminal status.
         status: InstanceStatus,
     },
 
@@ -97,24 +129,33 @@ pub enum WorkflowError {
         "template tenant mismatch for instance {instance_id}: template {template_id} has tenant {template_tenant}, instance has tenant {instance_tenant}"
     )]
     TemplateTenantMismatch {
+        /// Template UUID.
         template_id: Uuid,
+        /// Instance UUID.
         instance_id: Uuid,
+        /// Tenant bound to the template.
         template_tenant: Uuid,
+        /// Tenant bound to the instance.
         instance_tenant: Uuid,
     },
 
     /// Template or instance entity-ref expected pinned revision but got latest reference.
     #[error("expected pinned entity reference for {entity_name}.{attribute}")]
     MissingPinnedReference {
+        /// Entity type name.
         entity_name: &'static str,
+        /// Attribute name.
         attribute: &'static str,
     },
 
     /// Referenced entity kind does not match expected entity kind.
     #[error("entity kind mismatch for {entity_name}: expected {expected}, found {actual}")]
     EntityKindMismatch {
+        /// Entity type name.
         entity_name: &'static str,
+        /// Expected kind UUID.
         expected: Uuid,
+        /// Actual kind UUID.
         actual: Uuid,
     },
 
@@ -124,7 +165,10 @@ pub enum WorkflowError {
 
     /// JSON serialization or parsing failed.
     #[error("json error: {detail}")]
-    Json { detail: String },
+    Json {
+        /// Error detail.
+        detail: String,
+    },
 
     /// Canonical JSON conversion failed.
     #[error("canonical JSON error: {0}")]
@@ -132,19 +176,33 @@ pub enum WorkflowError {
 
     /// Executor transport failed before a conclusive script result.
     #[error("executor unreachable: {detail}")]
-    ExecutorUnreachable { detail: String },
+    ExecutorUnreachable {
+        /// Transport error detail.
+        detail: String,
+    },
 
     /// Step failed with a script-level error category.
     #[error("step execution failed: {detail}")]
-    StepExecutionFailed { detail: String },
+    StepExecutionFailed {
+        /// Script error detail.
+        detail: String,
+    },
 
     /// Numeric overflow while computing next sequence numbers.
     #[error("integer overflow while computing {field}")]
-    IntegerOverflow { field: &'static str },
+    IntegerOverflow {
+        /// Field name that overflowed.
+        field: &'static str,
+    },
 
     /// Numeric conversion failed at the API/storage boundary.
     #[error("integer conversion failed for {field}: {detail}")]
-    IntegerConversion { field: &'static str, detail: String },
+    IntegerConversion {
+        /// Field name.
+        field: &'static str,
+        /// Conversion error detail.
+        detail: String,
+    },
 }
 
 impl WorkflowError {
