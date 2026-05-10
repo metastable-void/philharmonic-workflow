@@ -9,6 +9,11 @@ this crate adheres to
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-05-10
+
+- Added the optional `data_config` content slot to
+  `WorkflowTemplate.CONTENT_SLOTS`.
+
 ## [0.1.2]
 
 - Added doc comments on `WorkflowError` variant fields.

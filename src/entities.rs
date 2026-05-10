@@ -10,8 +10,11 @@ impl Entity for WorkflowTemplate {
     // Generated via `./scripts/xtask.sh gen-uuid -- --v4` on 2026-04-22.
     const KIND: Uuid = Uuid::from_u128(0xbf6b3627572b4727935567304ab8a0e9);
     const NAME: &'static str = "workflow_template";
-    const CONTENT_SLOTS: &'static [ContentSlot] =
-        &[ContentSlot::new("script"), ContentSlot::new("config")];
+    const CONTENT_SLOTS: &'static [ContentSlot] = &[
+        ContentSlot::new("script"),
+        ContentSlot::new("config"),
+        ContentSlot::new("data_config"),
+    ];
     const ENTITY_SLOTS: &'static [EntitySlot] =
         &[EntitySlot::of::<Tenant>("tenant", SlotPinning::Pinned)];
     const SCALAR_SLOTS: &'static [ScalarSlot] =
