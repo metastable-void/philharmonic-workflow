@@ -188,6 +188,13 @@ pub enum WorkflowError {
         detail: String,
     },
 
+    /// Template data configuration is malformed or points at an invalid dataset.
+    #[error("invalid data_config: {detail}")]
+    DataConfigInvalid {
+        /// Validation or decode failure detail.
+        detail: String,
+    },
+
     /// Numeric overflow while computing next sequence numbers.
     #[error("integer overflow while computing {field}")]
     IntegerOverflow {
@@ -231,6 +238,7 @@ impl WorkflowError {
             | Self::Json { .. }
             | Self::Canonical(_)
             | Self::StepExecutionFailed { .. }
+            | Self::DataConfigInvalid { .. }
             | Self::IntegerOverflow { .. }
             | Self::IntegerConversion { .. } => false,
         }

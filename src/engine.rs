@@ -3,6 +3,7 @@ use crate::{
     WorkflowError, WorkflowInstance, WorkflowTemplate,
 };
 
+use philharmonic_policy::{CorpusItem, EmbeddingDataset, decode_corpus};
 use philharmonic_store::{
     ContentStore, ContentStoreExt, EntityRefValue, EntityStore, EntityStoreExt, IdentityStore,
     RevisionInput, RevisionRow, StoreExt,
@@ -237,12 +238,14 @@ where
         let subject_json = subject.to_script_value().map_err(|error| {
             WorkflowError::json(format!("failed to serialize subject: {error}"))
         })?;
+        let data = build_script_data(&self.store, &template_revision, &instance_tenant_ref).await?;
 
         let script_arg = json!({
             "context": context,
             "args": args,
             "input": input_json,
             "subject": subject_json,
+            "data": data,
         });
 
         let concrete_config = self
@@ -533,6 +536,10 @@ fn required_content_attr(
         })
 }
 
+fn optional_content_attr(revision: &RevisionRow, attribute: &'static str) -> Option<Sha256> {
+    revision.content_attrs.get(attribute).copied()
+}
+
 fn required_entity_attr(
     revision: &RevisionRow,
     entity_name: &'static str,
@@ -546,6 +553,199 @@ fn required_entity_attr(
             entity_name,
             attribute,
         })
+}
+
+async fn build_script_data<S>(
+    store: &S,
+    template_revision: &RevisionRow,
+    template_tenant_ref: &EntityRefValue,
+) -> Result<JsonValue, WorkflowError>
+where
+    S: ContentStore + IdentityStore + EntityStore,
+{
+    let Some(data_config_hash) = optional_content_attr(template_revision, "data_config") else {
+        return Ok(JsonValue::Object(JsonMap::new()));
+    };
+    let data_config = load_json_content(
+        store,
+        data_config_hash,
+        WorkflowTemplate::NAME,
+        "data_config",
+    )
+    .await?;
+    let data_config_object =
+        data_config
+            .as_object()
+            .ok_or_else(|| WorkflowError::DataConfigInvalid {
+                detail: "data_config must be a JSON object".to_string(),
+            })?;
+
+    let mut embed_datasets = JsonMap::new();
+    if let Some(value) = data_config_object.get("embed_datasets") {
+        let bindings = value
+            .as_object()
+            .ok_or_else(|| WorkflowError::DataConfigInvalid {
+                detail: "data_config.embed_datasets must be a JSON object".to_string(),
+            })?;
+        for (name, public_value) in bindings {
+            let public_string =
+                public_value
+                    .as_str()
+                    .ok_or_else(|| WorkflowError::DataConfigInvalid {
+                        detail: format!("data_config.embed_datasets.{name} must be a UUID string"),
+                    })?;
+            let public_uuid = public_string.parse::<Uuid>().map_err(|error| {
+                WorkflowError::DataConfigInvalid {
+                    detail: format!(
+                        "data_config.embed_datasets.{name} is not a valid UUID: {error}"
+                    ),
+                }
+            })?;
+            let Some(identity) = store.resolve_public(public_uuid).await? else {
+                tracing::warn!(
+                    dataset_name = %name,
+                    public_uuid = %public_uuid,
+                    "embedding dataset referenced by data_config was not found"
+                );
+                continue;
+            };
+            let dataset_id = identity.typed::<EmbeddingDataset>().map_err(|error| {
+                WorkflowError::DataConfigInvalid {
+                    detail: format!("{public_uuid} is not an embedding dataset identity: {error}"),
+                }
+            })?;
+            let entity = store
+                .get_entity(dataset_id.internal().as_uuid())
+                .await?
+                .ok_or(WorkflowError::DataConfigInvalid {
+                    detail: format!("embedding dataset {public_uuid} entity row is missing"),
+                })?;
+            if entity.kind != EmbeddingDataset::KIND {
+                return Err(WorkflowError::DataConfigInvalid {
+                    detail: format!(
+                        "{public_uuid} kind mismatch: expected {}, found {}",
+                        EmbeddingDataset::KIND,
+                        entity.kind
+                    ),
+                });
+            }
+            let latest = store
+                .get_latest_revision_typed::<EmbeddingDataset>(dataset_id)
+                .await?
+                .ok_or(WorkflowError::DataConfigInvalid {
+                    detail: format!("embedding dataset {public_uuid} has no revisions"),
+                })?;
+            let dataset_tenant = required_entity_attr(&latest, EmbeddingDataset::NAME, "tenant")?;
+            if dataset_tenant.target_entity_id != template_tenant_ref.target_entity_id {
+                return Err(WorkflowError::DataConfigInvalid {
+                    detail: format!("embedding dataset {public_uuid} belongs to another tenant"),
+                });
+            }
+            if bool_attr(&latest, EmbeddingDataset::NAME, "is_retired")? {
+                continue;
+            }
+            let Some(corpus_hash) = optional_content_attr(&latest, "corpus") else {
+                continue;
+            };
+            let corpus_bytes =
+                load_content_blob(store, corpus_hash, EmbeddingDataset::NAME, "corpus").await?;
+            let corpus = decode_corpus(corpus_bytes.bytes()).map_err(|error| {
+                WorkflowError::DataConfigInvalid {
+                    detail: format!("failed to decode corpus for {public_uuid}: {error}"),
+                }
+            })?;
+            embed_datasets.insert(name.clone(), corpus_items_to_json(&corpus)?);
+        }
+    }
+
+    let mut data = JsonMap::new();
+    data.insert(
+        "embed_datasets".to_string(),
+        JsonValue::Object(embed_datasets),
+    );
+    Ok(JsonValue::Object(data))
+}
+
+async fn load_json_content<S>(
+    store: &S,
+    hash: Sha256,
+    entity_name: &'static str,
+    attribute: &'static str,
+) -> Result<JsonValue, WorkflowError>
+where
+    S: ContentStore,
+{
+    let typed_hash = ContentHash::<CanonicalJson>::from_digest_unchecked(hash);
+    let canonical = store.get_typed::<CanonicalJson>(typed_hash).await?.ok_or(
+        WorkflowError::MissingContentBlob {
+            entity_name,
+            attribute,
+            hash,
+        },
+    )?;
+    canonical_to_json(&canonical)
+}
+
+async fn load_content_blob<S>(
+    store: &S,
+    hash: Sha256,
+    entity_name: &'static str,
+    attribute: &'static str,
+) -> Result<philharmonic_types::ContentValue, WorkflowError>
+where
+    S: ContentStore,
+{
+    store
+        .get(hash)
+        .await?
+        .ok_or(WorkflowError::MissingContentBlob {
+            entity_name,
+            attribute,
+            hash,
+        })
+}
+
+fn bool_attr(
+    revision: &RevisionRow,
+    entity_name: &'static str,
+    attribute: &'static str,
+) -> Result<bool, WorkflowError> {
+    match revision.scalar_attrs.get(attribute) {
+        Some(ScalarValue::Bool(value)) => Ok(*value),
+        Some(ScalarValue::I64(_)) => Err(WorkflowError::InvalidScalarType {
+            entity_name,
+            attribute,
+            expected: "bool",
+            actual: "i64",
+        }),
+        None => Err(WorkflowError::MissingScalarAttribute {
+            entity_name,
+            attribute,
+        }),
+    }
+}
+
+fn corpus_items_to_json(items: &[CorpusItem]) -> Result<JsonValue, WorkflowError> {
+    let mut values = Vec::with_capacity(items.len());
+    for item in items {
+        let mut object = JsonMap::new();
+        object.insert("id".to_string(), JsonValue::String(item.id.clone()));
+        let mut vector = Vec::with_capacity(item.vector.len());
+        for value in &item.vector {
+            let number = serde_json::Number::from_f64(f64::from(*value)).ok_or_else(|| {
+                WorkflowError::DataConfigInvalid {
+                    detail: format!("corpus item {} contains a non-finite vector value", item.id),
+                }
+            })?;
+            vector.push(JsonValue::Number(number));
+        }
+        object.insert("vector".to_string(), JsonValue::Array(vector));
+        if let Some(payload) = item.payload.as_ref() {
+            object.insert("payload".to_string(), payload.clone());
+        }
+        values.push(JsonValue::Object(object));
+    }
+    Ok(JsonValue::Array(values))
 }
 
 fn read_status(revision: &RevisionRow) -> Result<InstanceStatus, WorkflowError> {

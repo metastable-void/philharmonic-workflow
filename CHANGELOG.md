@@ -9,6 +9,13 @@ this crate adheres to
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-05-10
+
+- Added workflow-engine `data.embed_datasets` script argument assembly
+  from template `data_config` bindings.
+- Added `WorkflowError::DataConfigInvalid` for malformed or unsafe
+  template data bindings.
+
 ## [0.1.3] - 2026-05-10
 
 - Added the optional `data_config` content slot to
