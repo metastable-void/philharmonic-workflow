@@ -21,8 +21,8 @@ tracing = "0.1"
 [dev-dependencies]
 philharmonic-store-sqlx-mysql = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
-testcontainers = "0.27"
-testcontainers-modules = { version = "0.15", features = ["mysql"] }
+testcontainers = { version = "0.27", default-features = false, features = ["aws-lc-rs"] }
+testcontainers-modules = { version = "0.15", default-features = false, features = ["aws-lc-rs", "mysql"] }
 sqlx = { version = "0.8", default-features = false, features = ["mysql", "runtime-tokio"] }
 
 [profile.release]
