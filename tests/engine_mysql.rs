@@ -19,17 +19,72 @@ use serde_json::json;
 
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{Mutex, MutexGuard};
+use dockerlet::{Container, GenericImage, IntoContainerPort, WaitFor};
+use tokio::sync::OnceCell;
 
-use testcontainers_modules::{
-    mysql::Mysql,
-    testcontainers::{ContainerAsync, ImageExt, core::IntoContainerPort, runners::AsyncRunner},
-};
+/// Warm shared MySQL container; same pattern as
+/// philharmonic-store-sqlx-mysql/tests/integration.rs.
+static SHARED_MYSQL: OnceCell<SharedMysql> = OnceCell::const_new();
 
-type ContainerHandle = ContainerAsync<Mysql>;
+struct SharedMysql {
+    _container: Container,
+    base_url: String,
+}
+
+async fn shared_mysql() -> &'static SharedMysql {
+    SHARED_MYSQL
+        .get_or_init(|| async {
+            let container = GenericImage::new("mysql", "8")
+                .with_exposed_port(3306.tcp())
+                .with_env_var("MYSQL_ALLOW_EMPTY_PASSWORD", "yes")
+                .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
+                .with_startup_timeout(Duration::from_secs(180))
+                .start()
+                .await
+                .expect("start shared MySQL container");
+            let host = container.get_host().await.expect("container host");
+            let port = container
+                .get_host_port_ipv4(3306.tcp())
+                .await
+                .expect("container port");
+            SharedMysql {
+                _container: container,
+                base_url: format!("mysql://root@{host}:{port}"),
+            }
+        })
+        .await
+}
+
+fn unique_db_name() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("dl_t_{}_{n}", std::process::id())
+}
+
+async fn connect_with_retry(url: &str) -> MySqlPool {
+    use std::time::Instant;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut backoff = Duration::from_millis(100);
+    let mut last_err = None;
+    while Instant::now() < deadline {
+        match MySqlPool::connect(url).await {
+            Ok(pool) => return pool,
+            Err(e) => {
+                last_err = Some(e);
+                tokio::time::sleep(backoff).await;
+                backoff = std::cmp::min(backoff * 2, Duration::from_secs(2));
+            }
+        }
+    }
+    panic!(
+        "could not connect to shared MySQL within 30s: {:?}",
+        last_err
+    );
+}
 
 #[derive(Clone)]
 struct SharedSqlStore(Arc<SqlStore<SinglePool>>);
@@ -128,30 +183,50 @@ impl EntityStore for SharedSqlStore {
 }
 
 struct TestContext {
-    _serial_guard: MutexGuard<'static, ()>,
-    _container: ContainerHandle,
+    db_name: String,
     _pool: MySqlPool,
     store: SharedSqlStore,
 }
 
-static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
-
-fn test_mutex() -> &'static Mutex<()> {
-    TEST_MUTEX.get_or_init(|| Mutex::new(()))
+impl Drop for TestContext {
+    fn drop(&mut self) {
+        let db_name = self.db_name.clone();
+        let base_url = SHARED_MYSQL
+            .get()
+            .map(|s| s.base_url.clone())
+            .unwrap_or_default();
+        std::thread::spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(_) => return,
+            };
+            runtime.block_on(async move {
+                if let Ok(pool) = MySqlPool::connect(&base_url).await {
+                    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS `{db_name}`"))
+                        .execute(&pool)
+                        .await;
+                }
+            });
+        });
+    }
 }
 
 async fn setup() -> TestContext {
-    let serial_guard = test_mutex().lock().await;
+    let shared = shared_mysql().await;
+    let db_name = unique_db_name();
 
-    let container = Mysql::default()
-        .with_startup_timeout(Duration::from_secs(180))
-        .start()
+    let admin_pool = connect_with_retry(&format!("{}/mysql", shared.base_url)).await;
+    sqlx::query(&format!("CREATE DATABASE `{db_name}`"))
+        .execute(&admin_pool)
         .await
         .unwrap();
-    let host = container.get_host().await.unwrap();
-    let port = container.get_host_port_ipv4(3306.tcp()).await.unwrap();
+    drop(admin_pool);
 
-    let database_url = format!("mysql://root@{}:{}/test", host, port);
+    let database_url = format!("{}/{db_name}", shared.base_url);
     let pool = MySqlPoolOptions::new()
         .max_connections(8)
         .acquire_timeout(Duration::from_secs(10))
@@ -164,8 +239,7 @@ async fn setup() -> TestContext {
     let store = SharedSqlStore::new(SqlStore::from_pool(pool.clone()));
 
     TestContext {
-        _serial_guard: serial_guard,
-        _container: container,
+        db_name,
         _pool: pool,
         store,
     }

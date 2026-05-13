@@ -1,6 +1,6 @@
 [package]
 name = "philharmonic-workflow"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0 OR MPL-2.0"
@@ -19,10 +19,9 @@ async-trait = "0.1"
 tracing = "0.1"
 
 [dev-dependencies]
+dockerlet = "0.1"
 philharmonic-store-sqlx-mysql = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
-testcontainers = { version = "0.27", default-features = false, features = ["aws-lc-rs"] }
-testcontainers-modules = { version = "0.15", default-features = false, features = ["aws-lc-rs", "mysql"] }
 sqlx = { version = "0.8", default-features = false, features = ["mysql", "runtime-tokio"] }
 
 [profile.release]
