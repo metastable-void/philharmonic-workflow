@@ -2,6 +2,7 @@ use philharmonic_policy::{MintingAuthority, Tenant};
 use philharmonic_types::{EntityId, JsonValue};
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 /// Authenticated caller category for workflow operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,7 +32,15 @@ pub struct SubjectContext {
 impl SubjectContext {
     /// Serialize subject context for script arguments.
     pub fn to_script_value(&self) -> Result<JsonValue, serde_json::Error> {
-        serde_json::to_value(self)
+        Ok(json!({
+            "kind": self.kind,
+            "id": self.id,
+            "tenant_id": self.tenant_id.public().as_uuid().to_string(),
+            "authority_id": self
+                .authority_id
+                .map(|authority_id| authority_id.public().as_uuid().to_string()),
+            "claims": self.claims,
+        }))
     }
 
     /// Convert to the persisted step-record subject shape.

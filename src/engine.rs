@@ -246,6 +246,10 @@ where
             "input": input_json,
             "subject": subject_json,
             "data": data,
+            "instance": {
+                "id": instance_id.public().as_uuid().to_string(),
+                "step": step_seq,
+            },
         });
 
         let concrete_config = self

@@ -9,6 +9,24 @@ this crate adheres to
 
 ## [Unreleased]
 
+### Added
+- `script_arg.instance: { id, step }` — workflow scripts now
+  receive the running `WorkflowInstance`'s public V4 UUID
+  (string) and the step seq (number, 1-based) currently
+  executing. Non-breaking: scripts that don't read
+  `arg.instance` are unaffected.
+
+### Changed
+- **Breaking (script-arg shape):** `subject.tenant_id` and
+  `subject.authority_id` are now bare public V4 UUID strings
+  (or `null` for `authority_id` on principal callers), not
+  `{internal, public}` objects. The previous nested shape was
+  a serde default leak of the internal V7 UUID into JS
+  scripts; the public V4 is the only identity scripts should
+  observe. Scripts that read `arg.subject.tenant_id.public`
+  must now read `arg.subject.tenant_id` directly. The
+  persisted `StepRecordSubject` (audit shape) is unchanged.
+
 ## [0.1.6] - 2026-05-14
 
 ### Changed

@@ -7,7 +7,7 @@ use common::{
 };
 
 use philharmonic_store::EntityStoreExt;
-use philharmonic_types::{Entity, ScalarValue};
+use philharmonic_types::{Entity, JsonValue, ScalarValue};
 use philharmonic_workflow::{
     InstanceStatus, StepExecutionError, StepRecord, StepRecordSubject, WorkflowEngine,
     WorkflowError, WorkflowInstance,
@@ -35,6 +35,15 @@ fn outcome(row: &philharmonic_store::RevisionRow) -> i64 {
         ScalarValue::I64(value) => *value,
         ScalarValue::Bool(_) => panic!("outcome must be i64"),
     }
+}
+
+fn script_arg_object<'a>(
+    arg: &'a JsonValue,
+    field: &str,
+) -> &'a serde_json::Map<String, JsonValue> {
+    arg.get(field)
+        .and_then(JsonValue::as_object)
+        .unwrap_or_else(|| panic!("script arg field {field} must be an object"))
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -218,6 +227,197 @@ async fn step_record_subject_never_persists_claims() {
     let object = subject_json.as_object().expect("subject object");
     assert!(!object.contains_key("claims"));
     assert!(!object.contains_key("tenant_id"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn script_arg_includes_public_instance_and_flat_principal_subject() {
+    let store = MockStore::new();
+    let executor = MockExecutor::new();
+    let lowerer = MockLowerer::new();
+    let engine = new_engine(&store, &executor, &lowerer);
+
+    let tenant_id = seed_tenant(&store, "tenant-script-arg-principal").await;
+    let template_id = seed_template(
+        &store,
+        tenant_id,
+        "export default async function main() {}",
+        json!({ "endpoint": "cfg-script-arg-principal" }),
+    )
+    .await;
+
+    let principal = principal_subject(tenant_id);
+    let instance_id = engine
+        .create_instance(
+            template_id,
+            canonical_json(&json!({ "arg": "value" })),
+            principal.clone(),
+        )
+        .await
+        .unwrap();
+
+    lowerer.push_response(Ok(json!({ "config": "first" })));
+    executor.push_response(Ok(
+        json!({ "context": { "step": 1 }, "output": { "ok": 1 } }),
+    ));
+    let first = engine
+        .execute_step(
+            instance_id,
+            canonical_json(&json!({ "input": "first" })),
+            principal.clone(),
+        )
+        .await
+        .unwrap();
+
+    lowerer.push_response(Ok(json!({ "config": "second" })));
+    executor.push_response(Ok(
+        json!({ "context": { "step": 2 }, "output": { "ok": 2 } }),
+    ));
+    let second = engine
+        .execute_step(
+            instance_id,
+            canonical_json(&json!({ "input": "second" })),
+            principal,
+        )
+        .await
+        .unwrap();
+
+    let calls = executor.calls();
+    assert_eq!(calls.len(), 2);
+
+    let public_instance = instance_id.public().as_uuid().to_string();
+    let internal_instance = instance_id.internal().as_uuid().to_string();
+    let public_tenant = tenant_id.public().as_uuid().to_string();
+    let internal_tenant = tenant_id.internal().as_uuid().to_string();
+
+    let first_arg = &calls[0].arg;
+    assert!(first_arg.get("context").is_some());
+    assert!(first_arg.get("args").is_some());
+    assert!(first_arg.get("input").is_some());
+    assert!(first_arg.get("data").is_some());
+    assert_eq!(first_arg["context"], json!({}));
+    assert_eq!(first_arg["args"], json!({ "arg": "value" }));
+    assert_eq!(first_arg["input"], json!({ "input": "first" }));
+    assert_eq!(first_arg["data"], json!({}));
+
+    let first_instance = script_arg_object(first_arg, "instance");
+    assert_eq!(first_instance.len(), 2);
+    assert_eq!(
+        first_instance.get("id").and_then(JsonValue::as_str),
+        Some(public_instance.as_str())
+    );
+    assert_ne!(
+        first_instance.get("id").and_then(JsonValue::as_str),
+        Some(internal_instance.as_str())
+    );
+    assert_eq!(
+        first_instance.get("step").and_then(JsonValue::as_u64),
+        Some(first.step_seq)
+    );
+    assert_eq!(first.step_seq, 1);
+
+    let second_arg = &calls[1].arg;
+    let second_instance = script_arg_object(second_arg, "instance");
+    assert_eq!(
+        second_instance.get("id").and_then(JsonValue::as_str),
+        Some(public_instance.as_str())
+    );
+    assert_eq!(
+        second_instance.get("step").and_then(JsonValue::as_u64),
+        Some(second.step_seq)
+    );
+    assert_eq!(second.step_seq, first.step_seq + 1);
+
+    let records = load_step_records(&store, instance_id).await;
+    assert_eq!(records.len(), 2);
+    let first_record_seq = i64::try_from(first.step_seq).expect("step seq fits i64");
+    let second_record_seq = i64::try_from(second.step_seq).expect("step seq fits i64");
+    assert!(records.iter().any(|row| step_seq(row) == first_record_seq));
+    assert!(records.iter().any(|row| step_seq(row) == second_record_seq));
+
+    let subject = script_arg_object(first_arg, "subject");
+    assert_eq!(subject.len(), 5);
+    assert_eq!(subject.get("kind"), Some(&json!("principal")));
+    assert_eq!(subject.get("id"), Some(&json!("principal-subject")));
+    assert_eq!(
+        subject.get("tenant_id").and_then(JsonValue::as_str),
+        Some(public_tenant.as_str())
+    );
+    assert_ne!(
+        subject.get("tenant_id").and_then(JsonValue::as_str),
+        Some(internal_tenant.as_str())
+    );
+    assert!(subject.get("authority_id").is_some_and(JsonValue::is_null));
+    assert_eq!(subject.get("claims"), Some(&json!({})));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn script_arg_flattens_ephemeral_subject() {
+    let store = MockStore::new();
+    let executor = MockExecutor::new();
+    let lowerer = MockLowerer::new();
+    let engine = new_engine(&store, &executor, &lowerer);
+
+    let tenant_id = seed_tenant(&store, "tenant-script-arg-ephemeral").await;
+    let template_id = seed_template(
+        &store,
+        tenant_id,
+        "export default async function main() {}",
+        json!({ "endpoint": "cfg-script-arg-ephemeral" }),
+    )
+    .await;
+
+    let principal = principal_subject(tenant_id);
+    let instance_id = engine
+        .create_instance(template_id, canonical_json(&json!({})), principal)
+        .await
+        .unwrap();
+
+    let claims = json!({ "user_id": "u42", "locale": "ja-JP" });
+    let step_subject =
+        ephemeral_subject(&store, tenant_id, "ephemeral-user-42", claims.clone()).await;
+    let authority_id = step_subject.authority_id.expect("ephemeral authority");
+
+    lowerer.push_response(Ok(json!({ "config": "resolved" })));
+    executor.push_response(Ok(json!({ "context": {}, "output": { "ok": true } })));
+    engine
+        .execute_step(
+            instance_id,
+            canonical_json(&json!({ "input": "go" })),
+            step_subject,
+        )
+        .await
+        .unwrap();
+
+    let calls = executor.calls();
+    assert_eq!(calls.len(), 1);
+
+    let subject = script_arg_object(&calls[0].arg, "subject");
+    assert_eq!(subject.len(), 5);
+    assert_eq!(subject.get("kind"), Some(&json!("ephemeral")));
+    assert_eq!(subject.get("id"), Some(&json!("ephemeral-user-42")));
+    assert_eq!(subject.get("claims"), Some(&claims));
+
+    let public_tenant = tenant_id.public().as_uuid().to_string();
+    let internal_tenant = tenant_id.internal().as_uuid().to_string();
+    assert_eq!(
+        subject.get("tenant_id").and_then(JsonValue::as_str),
+        Some(public_tenant.as_str())
+    );
+    assert_ne!(
+        subject.get("tenant_id").and_then(JsonValue::as_str),
+        Some(internal_tenant.as_str())
+    );
+
+    let public_authority = authority_id.public().as_uuid().to_string();
+    let internal_authority = authority_id.internal().as_uuid().to_string();
+    assert_eq!(
+        subject.get("authority_id").and_then(JsonValue::as_str),
+        Some(public_authority.as_str())
+    );
+    assert_ne!(
+        subject.get("authority_id").and_then(JsonValue::as_str),
+        Some(internal_authority.as_str())
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
