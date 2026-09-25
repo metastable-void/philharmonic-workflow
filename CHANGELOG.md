@@ -17,6 +17,11 @@ this crate adheres to
   `arg.instance` are unaffected.
 
 ### Changed
+- **Breaking (Rust API and new step-record wire shape):**
+  `StepRecordSubject` now persists non-empty caller claims verbatim in
+  `claims` instead of selecting a `mail_address` field. Null and empty
+  object claims remain absent; existing records without `claims` still
+  deserialize.
 - **Breaking (script-arg shape):** `subject.tenant_id` and
   `subject.authority_id` are now bare public V4 UUID strings
   (or `null` for `authority_id` on principal callers), not
@@ -25,7 +30,8 @@ this crate adheres to
   scripts; the public V4 is the only identity scripts should
   observe. Scripts that read `arg.subject.tenant_id.public`
   must now read `arg.subject.tenant_id` directly. The
-  persisted `StepRecordSubject` (audit shape) is unchanged.
+  persisted `StepRecordSubject` (audit shape) is unaffected by the
+  script-argument change.
 
 ## [0.1.6] - 2026-05-14
 

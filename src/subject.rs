@@ -43,19 +43,25 @@ impl SubjectContext {
         }))
     }
 
-    /// Convert to the persisted step-record subject shape.
+    /// Convert to the persisted step-record subject shape, retaining non-empty claims verbatim.
     pub fn to_step_record_subject(&self) -> StepRecordSubject {
         StepRecordSubject {
             kind: self.kind,
             id: self.id.clone(),
             authority_id: self.authority_id,
+            claims: match &self.claims {
+                JsonValue::Null => None,
+                JsonValue::Object(claims) if claims.is_empty() => None,
+                claims => Some(claims.clone()),
+            },
         }
     }
 }
 
 /// Persisted subject content for a step record.
 ///
-/// This intentionally excludes `claims` and tenant fields.
+/// Tenant fields are excluded. Caller-supplied claims are persisted verbatim
+/// when present; consumers interpret their own claim conventions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepRecordSubject {
     /// Caller kind.
@@ -64,4 +70,8 @@ pub struct StepRecordSubject {
     pub id: String,
     /// Minting authority for ephemeral subjects.
     pub authority_id: Option<EntityId<MintingAuthority>>,
+    /// Arbitrary caller-supplied claims, persisted verbatim when present.
+    /// This framework makes no assumptions about claim shape or meaning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claims: Option<JsonValue>,
 }

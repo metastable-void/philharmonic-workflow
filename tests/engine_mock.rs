@@ -174,7 +174,7 @@ async fn subject_from_execute_step_is_recorded_on_step_not_creator_subject() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn step_record_subject_never_persists_claims() {
+async fn step_record_subject_persists_nonempty_claims_verbatim() {
     let store = MockStore::new();
     let executor = MockExecutor::new();
     let lowerer = MockLowerer::new();
@@ -200,10 +200,25 @@ async fn step_record_subject_never_persists_claims() {
         .unwrap();
 
     let claims = json!({
-        "marker": "SHOULD_NOT_PERSIST",
+        "mail_address": "customer@example.com",
+        "marker": "PERSISTED",
         "nested": { "plan": "enterprise", "locale": "en-US" }
     });
-    let step_subject = ephemeral_subject(&store, tenant_id, "ephemeral-claims", claims).await;
+    let step_subject =
+        ephemeral_subject(&store, tenant_id, "ephemeral-claims", claims.clone()).await;
+    for absent_claims in [json!(null), json!({})] {
+        let mut other_subject = step_subject.clone();
+        other_subject.claims = absent_claims;
+        assert_eq!(other_subject.to_step_record_subject().claims, None);
+    }
+    for present_claims in [json!({ "mail_address": null }), json!("scalar"), json!([1])] {
+        let mut other_subject = step_subject.clone();
+        other_subject.claims = present_claims.clone();
+        assert_eq!(
+            other_subject.to_step_record_subject().claims,
+            Some(present_claims)
+        );
+    }
 
     lowerer.push_response(Ok(json!({ "config": "resolved" })));
     executor.push_response(Ok(json!({ "context": { "n": 1 }, "output": { "ok": 1 } })));
@@ -225,8 +240,15 @@ async fn step_record_subject_never_persists_claims() {
     let subject_json: serde_json::Value = subject_content.to_deserializable().unwrap();
 
     let object = subject_json.as_object().expect("subject object");
-    assert!(!object.contains_key("claims"));
+    assert_eq!(object.get("claims"), Some(&claims));
     assert!(!object.contains_key("tenant_id"));
+    assert!(!object.contains_key("mail_address"));
+    assert!(!object.contains_key("marker"));
+    assert!(!object.contains_key("nested"));
+    let mut legacy = object.clone();
+    legacy.remove("claims");
+    let legacy: StepRecordSubject = serde_json::from_value(json!(legacy)).unwrap();
+    assert_eq!(legacy.claims, None);
 }
 
 #[tokio::test(flavor = "current_thread")]
